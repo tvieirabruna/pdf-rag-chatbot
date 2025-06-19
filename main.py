@@ -1,12 +1,12 @@
 # Imports
 import logging
+import logfire
 import uvicorn
 
 from typing import List
-from pydantic import BaseModel, Field
 from dotenv import load_dotenv
-from langchain.schema import HumanMessage, SystemMessage
 from fastapi import FastAPI, File, UploadFile, HTTPException
+
 from src.document_ingestor import DocumentIngestor
 from src.pydantic_models import QuestionAnswer, QuestionRequest
 
@@ -28,6 +28,13 @@ load_dotenv()
 
 # Initialize FastAPI app
 app = FastAPI(title="Tractian - Document-based Chatbot", description="RAG-based chatbot for Tractian")
+
+# Configure Logfire
+logfire.configure()
+logfire.instrument_fastapi(app)
+logging.basicConfig(handlers=[logfire.LogfireLoggingHandler()])
+
+logger = logging.getLogger(__name__)
 
 # Initialize DocumentIngestor
 pdf_parser = DocumentIngestor()

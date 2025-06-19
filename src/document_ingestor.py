@@ -7,16 +7,18 @@ import time
 import shutil
 import logging
 import requests
-from PIL import Image
 
+from PIL import Image
 from pathlib import Path
 from dotenv import load_dotenv
 from fastapi import UploadFile
 from typing import List, Dict
-from src.ocr import MathpixOCR
-from src.pydantic_models import QuestionAnswer
 from tempfile import NamedTemporaryFile
-from langchain.chains import RetrievalQA
+from urllib.parse import urlparse, unquote
+from tqdm import tqdm
+from tqdm.contrib.logging import logging_redirect_tqdm
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 from langchain.docstore.document import Document
 from langchain.prompts import ChatPromptTemplate
 from langchain.schema import HumanMessage, SystemMessage
@@ -26,10 +28,9 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_text_splitters import RecursiveCharacterTextSplitter, Language
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnablePassthrough
-from urllib.parse import urlparse, unquote
-from tqdm import tqdm
-from tqdm.contrib.logging import logging_redirect_tqdm
-from concurrent.futures import ThreadPoolExecutor, as_completed
+
+from src.ocr import MathpixOCR
+from src.pydantic_models import QuestionAnswer
 
 # Redirect tqdm logging to the root logger
 logging_redirect_tqdm()
@@ -89,7 +90,7 @@ class DocumentIngestor:
             
         return markdown
     
-    def encode_image(self, image_url):
+    def encode_image(self, image_url: str) -> str:
         """Encode image to base64."""            
         headers = {
             'User-Agent': 'AddImageDescription/1.0 (your@email.com) PythonRequests/2.25.1'
@@ -215,7 +216,8 @@ class DocumentIngestor:
         
         return descriptions
     
-    def process_image(self, image):
+    def process_image(self, image: str) -> Dict:
+        """Process an image: describe it and extract the page number."""
         description = self.describe_image(image)
         page = self.extract_image_metadata(image)
         
@@ -238,18 +240,18 @@ class DocumentIngestor:
 
         return descriptions
 
-    def chunk_text(self, text: str) -> List[str]:
-        """Split text into chunks based on RecursiveCharacterTextSplitter strategy."""
+    def chunk_text(self, markdown: str, pdf_name: str) -> List[str]:
+        """Split markdown text into chunks based on RecursiveCharacterTextSplitter strategy."""
         logger.info(f"Chunking text...")
         text_splitter = RecursiveCharacterTextSplitter.from_language(language=Language.MARKDOWN, chunk_size=1250, chunk_overlap=0)
-        chunks = text_splitter.create_documents([text])
+        chunks = text_splitter.create_documents([markdown], metadatas=[{"source": pdf_name}])
         return chunks
 
     def parse_document(self, pdf_file) -> Dict:
         """Process a PDF document: convert to markdown, chunk it, and create embeddings."""
         logger.info(f"Ingesting document...")
         text = self.convert_pdf_to_markdown(pdf_file)
-        chunks = self.chunk_text(text)
+        chunks = self.chunk_text(text, pdf_file.filename)
         
         self.stored_chunks.append({"file": pdf_file.filename, "chunks": chunks})
         
@@ -259,9 +261,7 @@ class DocumentIngestor:
 
             for image in images:
                 image["file"] = pdf_file.filename
-                
             self.stored_images.extend(images)
-            print("Stored images: ", self.stored_images)
         
         self.cached_files.append(pdf_file.filename)
         
@@ -273,11 +273,13 @@ class DocumentIngestor:
         """Prepare the prompt template."""
         return ChatPromptTemplate.from_messages([("system", prompts["prompts"]["system"]), ("user", prompts["prompts"]["user"])])
 
-    def format_docs(self, docs):
+    def format_docs(self, docs: List[Document]) -> str:
         """Format the documents into a string."""
-        return "\n\n".join(doc.page_content for doc in docs)
+        return "\n\n".join(
+            f"\n\nSource: {doc.metadata['source']}\n\n{doc.page_content}" for doc in docs
+        )
     
-    def chain_retrieval(self) -> RetrievalQA:
+    def chain_retrieval(self) -> RunnablePassthrough:
         """Find the most relevant chunks for a given question."""
         if not self.stored_chunks:
             return None
@@ -289,8 +291,7 @@ class DocumentIngestor:
         for chunk in self.stored_chunks:
             all_docs.extend(chunk["chunks"])
 
-        # Turn each image description into a Document to identify where it came from
-        print("Stored images: ", self.stored_images)
+        # Turn each image description into a Document to track where it came from
         if self.stored_images:
             all_docs.extend(
                 Document(
