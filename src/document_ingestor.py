@@ -59,6 +59,7 @@ class DocumentIngestor:
         self.llm = ChatOpenAI(model="gpt-4o-mini", api_key=os.getenv("OPENAI_API_KEY"))
         self.llm_fallback = ChatGoogleGenerativeAI(model="gemini-2.0-flash", api_key=os.getenv("GOOGLE_API_KEY"))
         self.embeddings = OpenAIEmbeddings(model="text-embedding-3-small", api_key=os.getenv("OPENAI_API_KEY"))
+        self.cached_files = []
         self.documents_json = []
         self.stored_chunks = []
         self.stored_images = []
@@ -129,8 +130,12 @@ class DocumentIngestor:
     def extract_md_image(self, markdown: str) -> List[str]:
         """Return a list with each raw Markdown image string."""
         _IMAGE_RX = re.compile(r'!\[[^\]]*\]\(\s*[^)\s]+(?:\s+"[^"]*")?\s*\)', re.VERBOSE | re.MULTILINE)
-        
         return [m.group(0) for m in _IMAGE_RX.finditer(markdown)]
+
+    def has_md_image(self, markdown: str) -> bool:
+        """Return True if a Markdown image pattern is found, else False."""
+        _IMAGE_RX = re.compile(r'!\[[^\]]*\]\(\s*[^)\s]+(?:\s+"[^"]*")?\s*\)', re.VERBOSE | re.MULTILINE)
+        return bool(_IMAGE_RX.search(markdown))
     
     def extract_image_metadata(self, markdown_or_url: str) -> int:
         """
@@ -246,14 +251,22 @@ class DocumentIngestor:
         text = self.convert_pdf_to_markdown(pdf_file)
         chunks = self.chunk_text(text)
         
-        logger.info(f"Processing images...")
-        images = self.describe_images(text)
+        self.stored_chunks.append({"file": pdf_file.filename, "chunks": chunks})
         
-        self.stored_chunks += chunks
-        self.stored_images += images
+        if self.has_md_image(text):
+            logger.info(f"Processing images...")
+            images = self.describe_images(text)
+
+            for image in images:
+                image["file"] = pdf_file.filename
+                
+            self.stored_images.extend(images)
+            print("Stored images: ", self.stored_images)
+        
+        self.cached_files.append(pdf_file.filename)
         
         return {
-            "chunks_processed": len(chunks) + len(images)
+            "chunks_processed": len(chunks) + (len(images) if self.has_md_image(text) else 0)
         }
     
     def prepare_prompt_template(self):
@@ -266,21 +279,23 @@ class DocumentIngestor:
     
     def chain_retrieval(self) -> RetrievalQA:
         """Find the most relevant chunks for a given question."""
-        if not (self.stored_chunks or self.stored_images):
+        if not self.stored_chunks:
             return None
 
         # Initialize the list of documents
         all_docs: list[Document] = []
 
         # Add text chunks to all_docs
-        all_docs.extend(self.stored_chunks)
+        for chunk in self.stored_chunks:
+            all_docs.extend(chunk["chunks"])
 
         # Turn each image description into a Document to identify where it came from
+        print("Stored images: ", self.stored_images)
         if self.stored_images:
             all_docs.extend(
                 Document(
                     page_content=f"{desc['description']}",
-                    metadata={"origin": "image_description", "page": desc["page"], "number": desc["number"]}
+                    metadata={"origin": "image_description", "file": desc["file"], "page": desc["page"], "number": desc["number"]}
                 )
                 for desc in self.stored_images
                 if desc       

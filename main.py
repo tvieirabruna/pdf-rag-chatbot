@@ -46,6 +46,13 @@ async def upload_documents(files: List[UploadFile] = File(...)):
             if not file.filename.lower().endswith('.pdf'):
                 raise HTTPException(status_code=400, detail=f"File {file.filename} is not a PDF. Please upload a PDF file.")
 
+            # Check if the file is already in the cache
+            if file.filename in pdf_parser.cached_files:
+                logger.info(f"File {file.filename} already processed. Skipping...")
+                file_chunks = next((item["chunks"] for item in pdf_parser.stored_chunks if item["file"] == file.filename), [])
+                total_chunks += len(file_chunks)
+                continue
+
             logger.info(f"Starting processing of file {i+1}/{len(files)}: '{file.filename}'")
             
             result = pdf_parser.parse_document(file)
