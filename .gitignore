@@ -1,0 +1,9 @@
+# Folders
+**/__pycache__
+docs
+json
+markdown
+
+# Files
+.env
+*.ipynb
