@@ -7,18 +7,20 @@ A RAG-based chatbot that allows you to chat with your PDF documents. Built with 
 - 📄 PDF Document Processing
 - 🔍 OCR Support via Mathpix
 - 💬 Interactive Chat Interface
-- 🔄 Large Language Model (LLM) Fallback
+- 🔄 Large Language Model (LLM) Fallback (OpenAI GPT-4o-mini with Google Gemini as fallback)
 - 🔗 RAG (Retrieval Augmented Generation)
 - 🖼️ Image Analysis Support
 - 📊 Document Chunking and Embedding
 - 🚀 Fast API Backend
 - 🎯 Streamlit Frontend
+- 🐳 Docker Support
 
 ## Prerequisites
 
 - Python 3.11+
 - [Mathpix](https://mathpix.com/) account for OCR
 - OpenAI API key for embeddings and chat completion
+- Google API key for LLM fallback (optional)
 
 ## Environment Setup
 
@@ -28,23 +30,7 @@ git clone <repository-url>
 cd ml-challenge
 ```
 
-2. Create and activate a virtual environment:
-```bash
-# Windows
-python -m venv venv
-.\venv\Scripts\activate
-
-# Linux/MacOS
-python -m venv venv
-source venv/bin/activate
-```
-
-3. Install dependencies:
-```bash
-pip install -r requirements.txt
-```
-
-4. Create a `.env` file in the root directory with your API keys:
+2. Create a `.env` file in the root directory with your API keys:
 ```env
 OPENAI_API_KEY=your_openai_api_key_here
 GOOGLE_API_KEY=your_google_api_key_here
@@ -55,19 +41,66 @@ MATHPIX_APP_URL="https://api.mathpix.com"
 
 ## Running the Application
 
-The application consists of two parts: a FastAPI backend and a Streamlit frontend.
+You have two options to run the application: using Docker (recommended) or running locally.
 
-1. Start the FastAPI backend:
+### Option 1: Using Docker (Recommended)
+
+1. Make sure Docker and Docker Compose are installed on your system
+2. Run the application:
+```bash
+docker-compose up --build
+```
+
+The application will be available at:
+- Backend API: `http://localhost:8000`
+- Frontend (Streamlit): `http://localhost:8501`
+
+### Option 2: Running Locally
+
+#### Backend Setup
+
+1. Create and activate a virtual environment:
+```bash
+# Windows
+python -m venv venv
+.\venv\Scripts\activate
+
+# Linux/MacOS
+python -m venv venv
+source venv/bin/activate
+```
+
+2. Install backend dependencies:
+```bash
+cd src
+pip install -r requirements.txt
+```
+
+3. Start the FastAPI backend:
 ```bash
 python main.py
 ```
 The API will be available at `http://localhost:8000`
 
-2. In a new terminal, start the Streamlit frontend:
+#### Frontend Setup
+
+1. In a new terminal, navigate to the streamlit directory:
 ```bash
-streamlit run src/app.py
+cd streamlit
+```
+
+2. Install frontend dependencies:
+```bash
+pip install -r requirements.txt
+```
+
+3. Start the Streamlit frontend:
+```bash
+streamlit run app.py
 ```
 The web interface will be available at `http://localhost:8501`
+
+**Note:** When running locally, you need to update the API_URL in `streamlit/app.py` from `http://backend:8000` to `http://localhost:8000`.
 
 ## Usage
 
@@ -135,45 +168,78 @@ Response:
 
 ```
 ml-challenge/
-├── src/
-│   ├── app.py              # Streamlit frontend
-│   ├── document_ingestor.py # Document processing and RAG implementation
-│   ├── ocr.py             # OCR functionality
-│   ├── pydantic_models.py  # Data models
-│   └── prompts.yaml        # System prompts
-├── main.py                 # FastAPI backend
-├── requirements.txt        # Project dependencies
-└── README.md              # This file
+├── src/                           # Backend source code
+│   ├── main.py                    # FastAPI backend application
+│   ├── config.py                  # Configuration settings
+│   ├── requirements.txt           # Backend dependencies
+│   ├── Dockerfile                 # Backend Docker configuration
+│   ├── core/                      # Core functionality
+│   │   ├── document_ingestor.py   # Document processing and RAG implementation
+│   │   ├── ocr.py                 # OCR functionality
+│   │   ├── schemas.py             # Pydantic data models
+│   │   └── prompts.yml            # System prompts
+│   └── middleware/                # Custom middleware
+│       └── logging_middleware.py  # Request logging middleware
+├── streamlit/                     # Frontend source code
+│   ├── app.py                     # Streamlit frontend application
+│   ├── requirements.txt           # Frontend dependencies
+│   └── Dockerfile                 # Frontend Docker configuration
+├── docker-compose.yml             # Docker Compose configuration
+├── .env                          # Environment variables (create this)
+└── README.md                     # This file
 ```
 
 ## Dependencies
 
-Key dependencies include:
+### Backend Dependencies
 - FastAPI: Web framework for the backend
-- Streamlit: Frontend interface
-- LangChain: RAG implementation
+- LangChain: RAG implementation and LLM integration
 - OpenAI: Language model and embeddings
+- Google GenAI: Fallback language model
 - Mathpix: OCR processing
 - FAISS: Vector storage
 - PyYAML: YAML file handling
-- Logfire: Observability service
+- Uvicorn: ASGI server
+
+### Frontend Dependencies
+- Streamlit: Frontend interface
+- Requests: HTTP client for API communication
+
+## Configuration
+
+The application uses a configuration system located in `src/config.py`. Key configurations include:
+
+- **Server Settings**: Host, port, and server details
+- **LLM Settings**: Primary (OpenAI) and fallback (Google) models
+- **Document Processing**: Chunk size and overlap settings
+- **Image Processing**: OCR and image handling parameters
 
 ## Troubleshooting
 
-1. **File Upload Issues**
+1. **Docker Issues**
+   - Ensure Docker and Docker Compose are running
+   - Check if ports 8000 and 8501 are available
+   - Verify the `.env` file exists and contains valid API keys
+
+2. **File Upload Issues**
    - Ensure files are in PDF format
    - Check file size limits
    - Verify Mathpix API credentials
 
-2. **OCR Issues**
+3. **OCR Issues**
    - Verify Mathpix credentials in `.env`
    - Check PDF quality and format
    - Look for error messages in the logs
 
-3. **Chat Issues**
+4. **Chat Issues**
    - Verify OpenAI API key
    - Check if documents were processed successfully
    - Ensure backend is running
+
+5. **Local Development Issues**
+   - When running locally, update `API_URL` in `streamlit/app.py`
+   - Ensure both backend and frontend are running
+   - Check virtual environment activation
 
 ## Contributing
 
