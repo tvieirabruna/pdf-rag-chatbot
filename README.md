@@ -27,7 +27,7 @@ A RAG-based chatbot that allows you to chat with your PDF documents. Built with 
 1. Clone the repository:
 ```bash
 git clone <repository-url>
-cd ml-challenge
+cd pdf-rag-chatbot
 ```
 
 2. Create a `.env` file in the root directory with your API keys:
