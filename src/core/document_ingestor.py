@@ -72,6 +72,7 @@ class DocumentIngestor:
             model=LLM["embeddings"]["model"], 
             api_key=LLM["embeddings"]["api_key"]
         )
+        self.ephemeral_chat_history = []
         
         # Initialize caching if enabled
         if CACHE["enabled"]:
@@ -294,6 +295,16 @@ class DocumentIngestor:
             f"\n\nSource: {doc.metadata['source']}\n\n{doc.page_content}" for doc in docs
         )
     
+    def trim_messages(self):
+        """Trim the chat history to keep only the most recent 6 messages."""
+        if len(self.ephemeral_chat_history) > 6:
+            self.ephemeral_chat_history = self.ephemeral_chat_history[-6:]
+    
+    def add_message_to_history(self, role: str, content: str):
+        """Add a message and trim history."""
+        self.ephemeral_chat_history.append({"role": role, "content": content})
+        self.trim_messages()
+    
     def chain_retrieval(self) -> RunnablePassthrough:
         """Find the most relevant chunks for a given question."""
         if not self.stored_chunks:
@@ -320,13 +331,16 @@ class DocumentIngestor:
         vector_store = FAISS.from_documents(all_docs, self.embeddings)
 
         retriever = vector_store.as_retriever()
-        
+
+        self.trim_messages()
+        print(f"Chat history: {self.ephemeral_chat_history}")
         prompt = self.prepare_prompt_template()
 
         # Set base inputs
         base_inputs = {
             "question": lambda x: x["question"],
             "context":  lambda x: self.format_docs(x["context"]),
+            "chat_history": lambda x: self.ephemeral_chat_history
         }
 
         # Set fallback chain
@@ -338,8 +352,6 @@ class DocumentIngestor:
         
         retrieve_docs = (lambda x: x["question"]) | retriever
 
-        chain = RunnablePassthrough.assign(context=retrieve_docs).assign(
-            answer=rag_chain_from_docs
-        )
+        chain = RunnablePassthrough.assign(context=retrieve_docs).assign(answer=rag_chain_from_docs)
 
         return chain

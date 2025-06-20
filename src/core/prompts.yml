@@ -8,7 +8,12 @@ prompts:
     1. **Analyze:** Carefully examine the provided images and text context.
     2. **Synthesize:** Integrate information from both the visual and textual elements.
     3. **Reason:**  Deduce logical connections and inferences to address the question.
-    4. **Ambiguity:** If the context is insufficient to answer, respond "Not enough context to answer."
+    4. **Ambiguity:** If the context is insufficient to answer, ask the user for more information.
+    5. **Not repetitive:** Check the chat history. If the last two messages are both asking for more information, answer "I don't have enough context to answer.".
+
+    <chat_history>
+    {chat_history}
+    </chat_history>
 
     <context>
     {context}

@@ -11,7 +11,7 @@ st.set_page_config(
 )
 
 # Constants
-API_URL = "http://backend:8000"  # FastAPI backend URL
+API_URL = "http://localhost:8000"  # FastAPI backend URL
 
 def upload_files(uploaded_files: List) -> dict:
     """Upload files directly to the API."""
