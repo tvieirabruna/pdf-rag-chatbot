@@ -29,8 +29,9 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter, Language
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnablePassthrough
 
-from src.ocr import MathpixOCR
-from src.pydantic_models import QuestionAnswer
+from core.ocr import MathpixOCR
+from core.schemas import QuestionAnswer
+from config import LOGGING, LLM, IMAGE, DOCUMENT, PROMPTS_FILE, CACHE
 
 # Redirect tqdm logging to the root logger
 logging_redirect_tqdm()
@@ -40,15 +41,17 @@ load_dotenv()
 
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    level=getattr(logging, LOGGING["level"]),
+    format=LOGGING["format"]
 )
 logger = logging.getLogger("Tractian - Document Ingestor")
-logging.getLogger("httpx").setLevel(logging.WARNING)
-logging.getLogger("faiss").setLevel(logging.WARNING)
+
+# Set logging levels for specific loggers
+for logger_name, level in LOGGING["loggers"].items():
+    logging.getLogger(logger_name).setLevel(level)
 
 # Load prompts
-with open("src/prompts.yaml", "r", encoding="utf-8") as f:
+with open(PROMPTS_FILE, "r", encoding="utf-8") as f:
     prompts = yaml.safe_load(f)
 
 class DocumentIngestor:
@@ -57,13 +60,31 @@ class DocumentIngestor:
     It also creates the chain for the retrieval of the most relevant chunks for a given question.
     """
     def __init__(self):
-        self.llm = ChatOpenAI(model="gpt-4o-mini", api_key=os.getenv("OPENAI_API_KEY"))
-        self.llm_fallback = ChatGoogleGenerativeAI(model="gemini-2.0-flash", api_key=os.getenv("GOOGLE_API_KEY"))
-        self.embeddings = OpenAIEmbeddings(model="text-embedding-3-small", api_key=os.getenv("OPENAI_API_KEY"))
-        self.cached_files = []
-        self.documents_json = []
-        self.stored_chunks = []
-        self.stored_images = []
+        self.llm = ChatOpenAI(
+            model=LLM["primary"]["model"], 
+            api_key=LLM["primary"]["api_key"]
+        )
+        self.llm_fallback = ChatGoogleGenerativeAI(
+            model=LLM["fallback"]["model"], 
+            api_key=LLM["fallback"]["api_key"]
+        )
+        self.embeddings = OpenAIEmbeddings(
+            model=LLM["embeddings"]["model"], 
+            api_key=LLM["embeddings"]["api_key"]
+        )
+        
+        # Initialize caching if enabled
+        if CACHE["enabled"]:
+            self.cached_files = []
+            self.documents_json = []
+            self.stored_chunks = [] if CACHE["store_chunks"] else None
+            self.stored_images = [] if CACHE["store_images"] else None
+        else:
+            self.cached_files = None
+            self.documents_json = None
+            self.stored_chunks = None
+            self.stored_images = None
+            
         self.output_parser = StrOutputParser(pydantic_object=QuestionAnswer)
 
     def convert_pdf_to_markdown(self, file: UploadFile) -> str:
@@ -92,40 +113,32 @@ class DocumentIngestor:
     
     def encode_image(self, image_url: str) -> str:
         """Encode image to base64."""            
-        headers = {
-            'User-Agent': 'AddImageDescription/1.0 (your@email.com) PythonRequests/2.25.1'
-        }
-        
         try:
-            response = requests.get(image_url, headers=headers)
+            response = requests.get(image_url, headers=IMAGE["headers"])
             response.raise_for_status()
             
-            # Use a more efficient approach for common image formats
             try:
                 img = Image.open(io.BytesIO(response.content))
                 
-                # Use a smaller size for faster processing
-                max_size = 800  # Reduced from 1024 for better performance
-                if max(img.size) > max_size:
-                    img.thumbnail((max_size, max_size))
+                if max(img.size) > IMAGE["max_size"]:
+                    img.thumbnail((IMAGE["max_size"], IMAGE["max_size"]))
                 
-                # Use a more efficient compression
                 img_byte_arr = io.BytesIO()
-                img.save(img_byte_arr, format='JPEG', quality=85)  # Reduced from 85
+                img.save(img_byte_arr, format='JPEG', quality=IMAGE["quality"])
                 img_byte_arr = img_byte_arr.getvalue()
                 
-                if len(img_byte_arr) > 20 * 1024 * 1024:
-                    raise ValueError("Image size exceeds 20MB limit")
+                if len(img_byte_arr) > IMAGE["max_size_mb"] * 1024 * 1024:
+                    raise ValueError(f"Image size exceeds {IMAGE['max_size_mb']}MB limit")
                 
                 encoded_image = base64.b64encode(img_byte_arr).decode('utf-8')
                 return encoded_image
             
             except Exception as e:
-                print(f"Error processing image format: {str(e)}")
+                logger.error(f"Error processing image format: {str(e)}")
                 return None
                 
         except Exception as e:
-            print(f"Error downloading image from {image_url}: {str(e)}")
+            logger.error(f"Error downloading image from {image_url}: {str(e)}")
             raise
     
     def extract_md_image(self, markdown: str) -> List[str]:
@@ -241,11 +254,13 @@ class DocumentIngestor:
         return descriptions
 
     def chunk_text(self, markdown: str, pdf_name: str) -> List[str]:
-        """Split markdown text into chunks based on RecursiveCharacterTextSplitter strategy."""
+        """Split the markdown text into chunks."""
         logger.info(f"Chunking text...")
-        text_splitter = RecursiveCharacterTextSplitter.from_language(language=Language.MARKDOWN, chunk_size=1250, chunk_overlap=0)
-        chunks = text_splitter.create_documents([markdown], metadatas=[{"source": pdf_name}])
-        return chunks
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=DOCUMENT["chunk_size"],
+            chunk_overlap=DOCUMENT["chunk_overlap"]
+        )
+        return text_splitter.create_documents([markdown], metadatas=[{"source": pdf_name}])
 
     def parse_document(self, pdf_file) -> Dict:
         """Process a PDF document: convert to markdown, chunk it, and create embeddings."""

@@ -156,7 +156,7 @@ Key dependencies include:
 - Mathpix: OCR processing
 - FAISS: Vector storage
 - PyYAML: YAML file handling
-- Logfire: Logging service
+- Logfire: Observability service
 
 ## Troubleshooting
 

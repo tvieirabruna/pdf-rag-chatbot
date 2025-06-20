@@ -1,40 +1,46 @@
 # Imports
 import logging
-import logfire
 import uvicorn
 
 from typing import List
-from dotenv import load_dotenv
 from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 
-from src.document_ingestor import DocumentIngestor
-from src.pydantic_models import QuestionAnswer, QuestionRequest
+from core.document_ingestor import DocumentIngestor
+from core.schemas import QuestionAnswer, QuestionRequest
+from config import SERVER, LOGGING, DOCUMENT
+from middleware.logging_middleware import LoggingMiddleware
 
 import warnings
 from urllib3.exceptions import InsecureRequestWarning
 
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    level=getattr(logging, LOGGING["level"]),
+    format=LOGGING["format"]
 )
-logger = logging.getLogger("Tractian - Document-based Chatbot")
+logger = logging.getLogger(SERVER["TITLE"])
 
 # Suppress InsecureRequestWarning from Mathpix
 warnings.simplefilter("ignore", InsecureRequestWarning)
 
-# Load environment variables
-load_dotenv()
-
 # Initialize FastAPI app
-app = FastAPI(title="Tractian - Document-based Chatbot", description="RAG-based chatbot for Tractian")
+app = FastAPI(
+    title=SERVER["TITLE"], 
+    description=SERVER["DESCRIPTION"]
+)
 
-# Configure Logfire
-logfire.configure()
-logfire.instrument_fastapi(app)
-logging.basicConfig(handlers=[logfire.LogfireLoggingHandler()])
+# Add logging middleware
+app.add_middleware(LoggingMiddleware)
 
-logger = logging.getLogger(__name__)
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Initialize DocumentIngestor
 pdf_parser = DocumentIngestor()
@@ -42,7 +48,7 @@ pdf_parser = DocumentIngestor()
 # Routes
 @app.get("/")
 async def root():
-    return {"message": "Tractian - Document-based Chatbot"}
+    return {"message": SERVER["TITLE"]}
 
 @app.post("/documents")
 async def upload_documents(files: List[UploadFile] = File(...)):
@@ -50,8 +56,11 @@ async def upload_documents(files: List[UploadFile] = File(...)):
     try:
         total_chunks = 0
         for i, file in enumerate(files):
-            if not file.filename.lower().endswith('.pdf'):
-                raise HTTPException(status_code=400, detail=f"File {file.filename} is not a PDF. Please upload a PDF file.")
+            if not any(file.filename.lower().endswith(fmt) for fmt in DOCUMENT["supported_formats"]):
+                raise HTTPException(
+                    status_code=400, 
+                    detail=f"File {file.filename} is not a supported format. Please upload one of: {', '.join(DOCUMENT['supported_formats'])}"
+                )
 
             # Check if the file is already in the cache
             if file.filename in pdf_parser.cached_files:
@@ -98,4 +107,9 @@ async def answer_question(request: QuestionRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True) 
+    uvicorn.run(
+        "main:app", 
+        host=SERVER["HOST"], 
+        port=SERVER["PORT"], 
+        reload=SERVER["RELOAD"]
+    ) 

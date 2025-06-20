@@ -3,6 +3,7 @@
 docs
 json
 markdown
+tests
 
 # Files
 .env

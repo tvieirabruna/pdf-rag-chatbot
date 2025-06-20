@@ -8,7 +8,6 @@ import logging
 logger = logging.getLogger()
 logging.getLogger('mathpix').setLevel(logging.ERROR)
 
-
 class MathpixOCR:
     def __init__(self):
         self.client = MathpixClient(

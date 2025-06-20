@@ -1,0 +1,35 @@
+services:
+  backend:
+    build: 
+      context: ./src
+      dockerfile: Dockerfile
+    container_name: fastapi_container
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./src:/app
+    env_file:
+      - .env
+    environment:
+      - PYTHONUNBUFFERED=1
+    networks:
+      - streamlit-fastapi
+
+  frontend:
+    build: 
+      context: ./streamlit
+      dockerfile: Dockerfile
+    container_name: streamlit_container
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./streamlit:/app
+    depends_on:
+      - backend
+    environment:
+      - PYTHONUNBUFFERED=1
+    networks:
+      - streamlit-fastapi
+
+networks:
+  streamlit-fastapi:
