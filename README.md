@@ -1,6 +1,10 @@
-# Document-based Chatbot
-
+# 🤖 Document-based Chatbot
 A RAG-based chatbot that allows you to chat with your PDF documents. Built with FastAPI, Streamlit, and LangChain.
+
+## Next steps and improvements
+
+- [ ] Implement Reranker
+- [ ] Add cache memory
 
 ## Features
 
