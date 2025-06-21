@@ -101,7 +101,11 @@ async def answer_question(request: QuestionRequest):
         # Parse the response from the chain
         parsed_response = response['answer']
         
-        return parsed_response.model_dump()
+        # Add messages to the chat history
+        pdf_parser.add_message_to_history("user", request.question)
+        pdf_parser.add_message_to_history("assistant", parsed_response.answer)
+                
+        return parsed_response
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
