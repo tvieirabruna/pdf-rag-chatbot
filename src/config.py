@@ -42,7 +42,7 @@ LLM = {
     "fallback": {
         "provider": "google",
         "model": "gemini-2.0-flash",
-        "api_key": os.getenv("GOOGLE_API_KEY")
+        "api_key": os.getenv("GEMINI_API_KEY")
     },
     "embeddings": {
         "provider": "openai",
@@ -63,8 +63,8 @@ IMAGE = {
 
 # Document Processing Configuration
 DOCUMENT = {
-    "chunk_size": 1250,
-    "chunk_overlap": 250,
+    "chunk_size": 1500,
+    "chunk_overlap": 150,
     "supported_formats": [".pdf"]
 }
 

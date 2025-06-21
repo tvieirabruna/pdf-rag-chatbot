@@ -322,7 +322,7 @@ class DocumentIngestor:
             all_docs.extend(
                 Document(
                     page_content=f"{desc['description']}",
-                    metadata={"origin": "image_description", "file": desc["file"], "page": desc["page"], "number": desc["number"]}
+                    metadata={"origin": "image_description", "source": desc["file"], "page": desc["page"], "number": desc["number"]}
                 )
                 for desc in self.stored_images
                 if desc       
@@ -330,10 +330,9 @@ class DocumentIngestor:
 
         vector_store = FAISS.from_documents(all_docs, self.embeddings)
 
-        retriever = vector_store.as_retriever()
+        retriever = vector_store.as_retriever(search_kwargs={"k": 5})
 
         self.trim_messages()
-        print(f"Chat history: {self.ephemeral_chat_history}")
         prompt = self.prepare_prompt_template()
 
         # Set base inputs

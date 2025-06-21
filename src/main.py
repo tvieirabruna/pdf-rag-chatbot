@@ -1,4 +1,5 @@
 # Imports
+from pathlib import Path
 import logging
 import uvicorn
 
@@ -100,15 +101,12 @@ async def answer_question(request: QuestionRequest):
         
         # Parse the response from the chain
         parsed_response = response['answer']
-        print(f"Parsed response: {parsed_response}")
         
         # Add messages to the chat history
         pdf_parser.add_message_to_history("user", request.question)
-        pdf_parser.add_message_to_history("assistant", response['answer'].model_dump().get("answer"))
-        
-        print(f"Chat history: {pdf_parser.ephemeral_chat_history}")
-        
-        return parsed_response.model_dump()
+        pdf_parser.add_message_to_history("assistant", parsed_response.answer)
+                
+        return parsed_response
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
