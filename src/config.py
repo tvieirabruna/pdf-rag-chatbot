@@ -32,9 +32,6 @@ LOGGING = {
     }
 }
 
-# API URL Configuration
-API_URL = "http://backend:8000"
-
 # LLM Configuration
 LLM = {
     "primary": {
