@@ -5,6 +5,7 @@ import re
 import yaml
 import time
 import shutil
+import hashlib
 import logging
 import requests
 
@@ -31,7 +32,7 @@ from langchain_core.runnables import RunnablePassthrough
 
 from core.ocr import MathpixOCR
 from core.schemas import QuestionAnswer
-from config import LOGGING, LLM, IMAGE, DOCUMENT, PROMPTS_FILE, CACHE
+from config import LOGGING, LLM, IMAGE, DOCUMENT, PROMPTS_FILE
 
 # Redirect tqdm logging to the root logger
 logging_redirect_tqdm()
@@ -44,7 +45,7 @@ logging.basicConfig(
     level=getattr(logging, LOGGING["level"]),
     format=LOGGING["format"]
 )
-logger = logging.getLogger("Tractian - Document Ingestor")
+logger = logging.getLogger("Document Ingestor")
 
 # Set logging levels for specific loggers
 for logger_name, level in LOGGING["loggers"].items():
@@ -73,18 +74,14 @@ class DocumentIngestor:
             api_key=LLM["embeddings"]["api_key"]
         )
         self.ephemeral_chat_history = []
+        self.vector_store = None
+        self.retriever = None
         
-        # Initialize caching if enabled
-        if CACHE["enabled"]:
-            self.cached_files = []
-            self.documents_json = []
-            self.stored_chunks = [] if CACHE["store_chunks"] else None
-            self.stored_images = [] if CACHE["store_images"] else None
-        else:
-            self.cached_files = None
-            self.documents_json = None
-            self.stored_chunks = None
-            self.stored_images = None
+        # Always initialize these as empty containers
+        self.processed_hashes = set()
+        self.documents_json = []
+        self.stored_chunks = []
+        self.stored_images = []
             
         self.output_parser = StrOutputParser(pydantic_object=QuestionAnswer)
 
@@ -186,11 +183,11 @@ class DocumentIngestor:
             raise ValueError("LLM returned empty content")
         return response
     
-    def describe_image(self, image: str) -> str:
-        """Describe the images in the list."""
+    def generate_image_description(self, image_md_tag: str) -> str:
+        """Generate a description for a single image given its Markdown tag."""
         _URL_MD_RX = re.compile(r'!\[[^\]]*\]\(\s*([^) \t\n\r]+)')
         
-        url = _URL_MD_RX.search(image).group(1)
+        url = _URL_MD_RX.search(image_md_tag).group(1)
         try:
             encoded_image = self.encode_image(url)
         
@@ -217,10 +214,10 @@ class DocumentIngestor:
             print(f"Error while describing image {url}: {e}")
             return None
     
-    def organize_image_metadata(self, descriptions: List[Dict]) -> List[Dict]:
-        """Organize the image metadata number by page."""
+    def assign_image_numbers_by_page(self, image_descriptions: List[Dict]) -> List[Dict]:
+        """Assign sequential numbers to images on each page."""
         page_counts = {}
-        for description in descriptions:
+        for description in image_descriptions:
             page = description["page"]
             if page not in page_counts:
                 page_counts[page] = 1
@@ -228,29 +225,30 @@ class DocumentIngestor:
                 page_counts[page] += 1
             description["number"] = page_counts[page]
         
-        return descriptions
+        return image_descriptions
     
-    def process_image(self, image: str) -> Dict:
-        """Process an image: describe it and extract the page number."""
-        description = self.describe_image(image)
-        page = self.extract_image_metadata(image)
+    def process_single_image(self, image_md_tag: str) -> Dict:
+        """Process a single image: generate its description and extract the page number."""
+        description = self.generate_image_description(image_md_tag)
+        page = self.extract_image_metadata(image_md_tag)
         
         # Sleep to avoid rate limit
         time.sleep(1)
         return {
-            "image": image,
+            "image": image_md_tag,
             "description": description,
             "page": page
         }
     
-    def describe_images(self, markdown: str) -> List[str]:
-        """Describe the images from the markdown using ThreadPoolExecutor and tqdm."""
+    def process_all_images(self, markdown: str) -> List[str]:
+        """Generate descriptions for all images in the markdown using ThreadPoolExecutor and tqdm."""
+        logger.info(f"Processing images...")
         images = self.extract_md_image(markdown)
         
         with ThreadPoolExecutor(max_workers=4) as executor:
-            results = list(tqdm(executor.map(self.process_image, images), total=len(images), desc="Describing images..."))
+            results = list(tqdm(executor.map(self.process_single_image, images), total=len(images), desc="Describing images..."))
 
-        descriptions = self.organize_image_metadata(results)
+        descriptions = self.assign_image_numbers_by_page(results)
 
         return descriptions
 
@@ -263,27 +261,127 @@ class DocumentIngestor:
         )
         return text_splitter.create_documents([markdown], metadatas=[{"source": pdf_name}])
 
+    def compute_filelike_hash(self, file_like, chunk_size=4096):
+        hasher = hashlib.sha256()
+        file_like.seek(0)
+        for chunk in iter(lambda: file_like.read(chunk_size), b""):
+            hasher.update(chunk)
+        file_like.seek(0)  # Reset pointer for further reads
+        return hasher.hexdigest()
+
     def parse_document(self, pdf_file) -> Dict:
         """Process a PDF document: convert to markdown, chunk it, and create embeddings."""
-        logger.info(f"Ingesting document...")
-        text = self.convert_pdf_to_markdown(pdf_file)
-        chunks = self.chunk_text(text, pdf_file.filename)
-        
-        self.stored_chunks.append({"file": pdf_file.filename, "chunks": chunks})
-        
-        if self.has_md_image(text):
-            logger.info(f"Processing images...")
-            images = self.describe_images(text)
+        try:
+            # Compute file hash for deduplication
+            file_hash = self.compute_filelike_hash(pdf_file.file)
+            
+            # Check if we've already processed this file
+            if file_hash in self.processed_hashes:
+                logger.info(f"File {pdf_file.filename} already processed (hash match)")
+                total_chunks = self._get_total_chunks_for_file(pdf_file.filename)
+                return {
+                    "already_processed": True,
+                    "chunks_processed": total_chunks
+                }
 
+            # Step 1: Convert PDF to markdown
+            text = self.convert_pdf_to_markdown(pdf_file)
+            if not text:
+                logger.warning(f"No text extracted from {pdf_file.filename}")
+                return {"chunks_processed": 0}
+
+            # Step 2: Process text chunks
+            text_chunks = self._process_text_chunks(text, pdf_file.filename)
+            chunk_count = len(text_chunks) if text_chunks else 0
+            logger.debug(f"Processed {chunk_count} text chunks from {pdf_file.filename}")
+
+            # Step 3: Process image chunks (if any)
+            image_chunks = self._process_image_chunks(text, pdf_file.filename)
+            image_count = len(image_chunks) if image_chunks else 0
+            if image_count > 0:
+                logger.debug(f"Processed {image_count} image chunks from {pdf_file.filename}")
+
+            # Step 4: Update state and build index
+            self.processed_hashes.add(file_hash)
+            self.build_vector_index()
+
+            total_chunks = chunk_count + image_count
+            return {
+                "chunks_processed": total_chunks
+            }
+            
+        except Exception as e:
+            logger.error(f"Error processing document {pdf_file.filename}: {str(e)}")
+            raise
+
+    def _get_total_chunks_for_file(self, filename: str) -> int:
+        """Get the total number of chunks (text + images) for a specific file."""
+        total_chunks = 0
+        
+        # Get text chunks
+        for chunk_set in self.stored_chunks:
+            if chunk_set["file"] == filename:
+                total_chunks += len(chunk_set["chunks"])
+                break
+        
+        # Get image chunks
+        for image_set in self.stored_images:
+            if image_set["file"] == filename:
+                total_chunks += len(image_set["chunks"])
+                break
+        
+        return total_chunks
+    
+    def _get_stored_chunks(self) -> int:
+        """Get the total number of chunks (text + images) for a specific file."""
+        total_chunks = 0
+        for chunk_set in self.stored_chunks:
+            total_chunks += len(chunk_set["chunks"])
+        
+        for image_chunk_set in self.stored_images:
+            total_chunks += len(image_chunk_set["chunks"])
+        
+        return total_chunks
+
+    def _process_text_chunks(self, text: str, filename: str) -> list:
+        chunks = self.chunk_text(text, filename)
+        self.stored_chunks.append({"file": filename, "chunks": chunks})
+        # logger.debug(f"Text Chunks for {filename}: {chunks}")
+        return chunks
+
+    def _process_image_chunks(self, text: str, filename: str) -> list:
+        image_chunks = []
+        if self.has_md_image(text):
+            logger.info(f"Processing images for {filename}...")
+            images = self.process_all_images(text)
             for image in images:
-                image["file"] = pdf_file.filename
-            self.stored_images.extend(images)
-        
-        self.cached_files.append(pdf_file.filename)
-        
-        return {
-            "chunks_processed": len(chunks) + (len(images) if self.has_md_image(text) else 0)
-        }
+                image["file"] = filename
+            image_chunks = [
+                Document(
+                    page_content=image["description"],
+                    metadata={
+                        "origin": "image_description",
+                        "source": image["file"],
+                        "page": image.get("page"),
+                        "number": image.get("number"),
+                    }
+                )
+                for image in images
+            ]
+            self.stored_images.append({"file": filename, "chunks": image_chunks})
+            logger.debug(f"Image Chunks for {filename}: {image_chunks}")
+        return image_chunks
+    
+    def build_vector_index(self) -> None:
+        """Build or update the FAISS vector store and retriever."""
+        all_docs: list[Document] = []
+        for chunk in self.stored_chunks:
+            all_docs.extend(chunk["chunks"])
+        if self.stored_images:
+            for image in self.stored_images:
+                all_docs.extend(image["chunks"])
+        self.vector_store = FAISS.from_documents(all_docs, self.embeddings)
+        self.retriever = self.vector_store.as_retriever()
     
     def prepare_prompt_template(self):
         """Prepare the prompt template."""
@@ -310,28 +408,6 @@ class DocumentIngestor:
         if not self.stored_chunks:
             return None
 
-        # Initialize the list of documents
-        all_docs: list[Document] = []
-
-        # Add text chunks to all_docs
-        for chunk in self.stored_chunks:
-            all_docs.extend(chunk["chunks"])
-
-        # Turn each image description into a Document to track where it came from
-        if self.stored_images:
-            all_docs.extend(
-                Document(
-                    page_content=f"{desc['description']}",
-                    metadata={"origin": "image_description", "source": desc["file"], "page": desc["page"], "number": desc["number"]}
-                )
-                for desc in self.stored_images
-                if desc       
-            )
-
-        vector_store = FAISS.from_documents(all_docs, self.embeddings)
-
-        retriever = vector_store.as_retriever(search_kwargs={"k": 5})
-
         self.trim_messages()
         prompt = self.prepare_prompt_template()
 
@@ -346,10 +422,10 @@ class DocumentIngestor:
         primary   = base_inputs | prompt | self.llm        .with_structured_output(QuestionAnswer)
         secondary = base_inputs | prompt | self.llm_fallback.with_structured_output(QuestionAnswer)
 
-        # Automatic retry on *any* Exception (you can narrow this tuple)
+        # Automatic retry on *any* Exception
         rag_chain_from_docs = primary.with_fallbacks([secondary], exceptions_to_handle=(Exception,))
         
-        retrieve_docs = (lambda x: x["question"]) | retriever
+        retrieve_docs = (lambda x: x["question"]) | self.retriever
 
         chain = RunnablePassthrough.assign(context=retrieve_docs).assign(answer=rag_chain_from_docs)
 

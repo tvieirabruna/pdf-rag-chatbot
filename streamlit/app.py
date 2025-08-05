@@ -5,7 +5,7 @@ from pathlib import Path
 
 # Configure page
 st.set_page_config(
-    page_title="Tractian - Document Chatbot",
+    page_title="Document Chatbot",
     page_icon="📚",
     layout="wide"
 )

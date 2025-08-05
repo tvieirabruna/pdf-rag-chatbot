@@ -54,6 +54,7 @@ async def root():
 async def upload_documents(files: List[UploadFile] = File(...)):
     """Upload and process PDF documents."""
     try:
+        total_documents = 0
         total_chunks = 0
         for i, file in enumerate(files):
             if not any(file.filename.lower().endswith(fmt) for fmt in DOCUMENT["supported_formats"]):
@@ -62,19 +63,17 @@ async def upload_documents(files: List[UploadFile] = File(...)):
                     detail=f"File {file.filename} is not a supported format. Please upload one of: {', '.join(DOCUMENT['supported_formats'])}"
                 )
 
-            # Check if the file is already in the cache
-            if file.filename in pdf_parser.cached_files:
-                logger.info(f"File {file.filename} already processed. Skipping...")
-                file_chunks = next((item["chunks"] for item in pdf_parser.stored_chunks if item["file"] == file.filename), [])
-                total_chunks += len(file_chunks)
-                continue
-
             logger.info(f"Starting processing of file {i+1}/{len(files)}: '{file.filename}'")
             
             result = pdf_parser.parse_document(file)
-            total_chunks += result["chunks_processed"]
-
-            logger.info(f"Processed file {i+1}: '{file.filename}' with {result['chunks_processed']} chunks")
+            
+            if result.get("already_processed", None):
+                logger.info(f"File {file.filename} already processed. Skipping...")
+                total_chunks = pdf_parser._get_stored_chunks()
+            else:
+                total_documents += 1
+                total_chunks += result["chunks_processed"]
+                logger.info(f"Processed file {i+1}: '{file.filename}' with {result['chunks_processed']} chunks")
 
         return {
             "message": "Documents processed successfully",

@@ -1,5 +1,5 @@
 """
-Configuration settings for the Tractian Document-based Chatbot application.
+Configuration settings for the Document-based Chatbot application.
 """
 
 import os
@@ -18,8 +18,8 @@ SERVER = {
     "HOST": "127.0.0.1",
     "PORT": 8000,
     "RELOAD": True,
-    "TITLE": "Tractian - Document-based Chatbot",
-    "DESCRIPTION": "RAG-based chatbot for Tractian"
+    "TITLE": "Document-based Chatbot",
+    "DESCRIPTION": "RAG-based chatbot for documents"
 }
 
 # Logging Configuration
@@ -36,7 +36,7 @@ LOGGING = {
 LLM = {
     "primary": {
         "provider": "openai",
-        "model": "gpt-4.1-mini",
+        "model": "gpt-4.1-nano",
         "api_key": os.getenv("OPENAI_API_KEY")
     },
     "fallback": {
@@ -63,14 +63,7 @@ IMAGE = {
 
 # Document Processing Configuration
 DOCUMENT = {
-    "chunk_size": 1500,
-    "chunk_overlap": 150,
+    "chunk_size": 2000,
+    "chunk_overlap": 200,
     "supported_formats": [".pdf"]
 }
-
-# Cache Configuration
-CACHE = {
-    "enabled": True,
-    "store_images": True,
-    "store_chunks": True
-} 

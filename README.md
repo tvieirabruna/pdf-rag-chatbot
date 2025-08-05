@@ -131,7 +131,7 @@ curl http://localhost:8000/
 Response:
 ```json
 {
-    "message": "Tractian - Document-based Chatbot"
+    "message": "Document-based Chatbot"
 }
 ```
 
