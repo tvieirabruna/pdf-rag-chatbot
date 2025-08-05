@@ -1,7 +1,7 @@
 import requests
 import streamlit as st
 from typing import List
-from pathlib import Path
+from config import API_URL
 
 # Configure page
 st.set_page_config(
@@ -9,9 +9,6 @@ st.set_page_config(
     page_icon="📚",
     layout="wide"
 )
-
-# Constants
-API_URL = "http://backend:8000"  # FastAPI backend URL
 
 def upload_files(uploaded_files: List) -> dict:
     """Upload files directly to the API."""
