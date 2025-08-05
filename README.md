@@ -104,7 +104,7 @@ streamlit run app.py
 ```
 The web interface will be available at `http://localhost:8501`
 
-**Note:** When running locally, you need to update the API_URL in `src/config.py` from `http://backend:8000` to `http://localhost:8000`.
+**Note:** When running locally, you need to update the API_URL in `streamlit/config.py` from `http://backend:8000` to `http://localhost:8000`.
 
 ## Usage
 
